@@ -1,7 +1,7 @@
 
 ## Python 3.6 抓取微博m站数据
 
-本脚本截止20190307，实测了下目前微博m站（https://m.weibo.cn/）、wap站（https://weibo.cn/）、c站（https://weibo.com/）都是会封IP的，至于之前好多构建账号池来爬取wap站的博客试了试都失败了，而且字段解析都有问题，毕竟微博的数据格式也在更新。所以自己看了看python语法，写了两个脚本来抓取，现在不使用代理单机1天50万条数据左右，日常足以。
+本脚本截止20190307，实测了下目前微博m站(https://m.weibo.cn/)、wap站(https://weibo.cn/)、c站(https://weibo.com/)都是会封IP的，至于之前好多构建账号池来爬取wap站的博客试了试都失败了，而且字段解析都有问题，毕竟微博的数据格式也在更新。所以自己看了看python语法，写了两个脚本来抓取，现在不使用代理单机1天50万条数据左右，日常足以。
 
 关于微博数据解析的自行百度，我只解析了微博时间和机型，其他的有需要自行添加就可以。
 
@@ -10,7 +10,7 @@
 - api ： https://m.weibo.cn/api/container/getIndex?type=uid&value=5463009082&containerid=1076031000258404</br> 
 - 抓取： 根据用户userId抓取历史发布的微博信息</br> 
 - 方法： python请求api接口（非页面）</br> 
-- 反扒： 疯狂抓取10~20s，IP会被禁封1~3分钟</br> 
+- 反扒： 疯狂抓取10-20s，IP会被禁封1-3分钟</br> 
 - 备注： 无需登录+IP代理池</br> 
 - 环境： Windosw或Linux、Python 3.6、Mysql、Redis</br> 
 
