@@ -23,8 +23,6 @@ REDIS_KEY = 'hw:weibo_spider:userIds'
 PROXY_KEY = 'hw:proxies'
 # redis 中存储抓取结果
 RESULT_KEY = 'hw:weibo_results'
-# url参数 containerid 目测变不变对结果没有影响，索性直接写死吧
-CONTAINERID = '1076031000258404'
 # 请求 headers
 headers = 'Mozilla/5.0 (iPhone; CPU iPhone OS 11_0 like Mac OS X) AppleWebKit/604.1.38 (KHTML, like Gecko) Version/11.0 Mobile/15A372 Safari/604.1'
 
@@ -37,6 +35,7 @@ start_time = time.time()
 
 
 # 格式化时间 m站只能精确到天，如果精确到分秒，请抓wap站（https://weibo.cn/）
+
 def time_fix(time_string):
     now_time = datetime.datetime.now()
     if '刚刚' in time_string:
@@ -50,19 +49,25 @@ def time_fix(time_string):
         return now_time.strftime('%Y-%m-%d')
 
     if '小时前' in time_string:
-        # minutes = re.search(r'^(\d+)小时', time_string).group(1)
-        # created_at = now_time - datetime.timedelta(hours=int(minutes))
-        return now_time.strftime('%Y-%m-%d')
+        minutes = re.search(r'^(\d+)小时', time_string).group(1)
+        created_at = now_time - datetime.timedelta(hours=int(minutes))
+
+        return created_at.strftime('%Y-%m-%d')
     if '今天' in time_string:
         return now_time.strftime('%Y-%m-%d')
 
     if '昨天' in time_string:
         created_at = now_time - datetime.timedelta(days=1)
         return created_at.strftime('%Y-%m-%d')
-    if '月' in time_string:
+
+    if '月' in time_string:  # 03月01日
         time_string = time_string.replace('月', '-').replace('日', '')
         time_string = str(now_time.year) + '-' + time_string
         return time_string
+
+    if '-' in time_string and len(time_string) == 5:  # 03-01 格式
+        return str(now_time.year) + '-' + time_string
+
     return time_string
 
 
@@ -139,10 +144,23 @@ def find_user_table(userId):
     pass
 
 
+# 获取微博主页的containerid，爬取微博内容时需要此id
+# 获取微博大V账号的用户基本信息，如：微博昵称、微博地址、微博头像、关注人数、粉丝数、性别、等级等
+# 这里我只需要获取containerid就可以了，其他信息如果有需要自行获取
+def get_userInfo(userId):
+    url = 'https://m.weibo.cn/api/container/getIndex?type=uid&value=' + userId
+    data = use_proxy(url, userId)
+    content = json.loads(data).get('data')
+    for data in content.get('tabsInfo').get('tabs'):
+        if (data.get('tab_type') == 'weibo'):
+            containerid = data.get('containerid')
+    return containerid
+
+
 # 发送请求解析数据
-def get_weibo_info(userId):
+def get_weibo_info(userId, containerid):
     table = find_user_table(userId)
-    weibo_url = 'https://m.weibo.cn/api/container/getIndex?type=uid&value=' + userId + '&containerid=' + CONTAINERID
+    weibo_url = 'https://m.weibo.cn/api/container/getIndex?type=uid&value=' + userId + '&containerid=' + containerid
     try:
         data = use_proxy(weibo_url, userId)
         response = json.loads(data).get('data')
@@ -156,12 +174,10 @@ def get_weibo_info(userId):
                 date = time_fix(item.get('created_at'))
                 if int(date[0:4]) < 2014:
                     break
-                ## 存储sql时 打开如下sql返回
                 # sql = "INSERT INTO " + table + " (user_id, date, os, page, create_time) value ('%s','%s','%s','%s','%s') " % (
                 #     userId, date, item.get('source'), str(page),
                 #     time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())))
                 # yield sql
-                ## 保存文件或redis时返回结果
                 results = userId + '\t' + date + '\t' + item.get('source') + '\t' + str(1) + '\t' + time.strftime(
                     '%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
                 yield results
@@ -175,7 +191,7 @@ def get_weibo_info(userId):
         page_num = int(int(total) / 10) + 1
         for page in range(2, page_num + 1):
             page_url = 'https://m.weibo.cn/api/container/getIndex?' \
-                       'type=uid&value=' + userId + '&containerid=' + CONTAINERID + '&page=' + str(page)
+                       'type=uid&value=' + userId + '&containerid=' + containerid + '&page=' + str(page)
             try:
                 page_data = use_proxy(page_url, userId)
                 items = json.loads(page_data).get('data').get('cards')
@@ -184,20 +200,19 @@ def get_weibo_info(userId):
             for item in items:
                 item = item.get('mblog')
                 if item:
-                    # 2014年之前的数据直接放弃，没有多少智能手机设备
+                    # 2014年之前的数据直接放弃
                     date = time_fix(item.get('created_at'))
                     if int(date[0:4]) < 2014:
                         break_flag = True
                         break
-                    ## 存储sql时 打开如下sql返回
                     # sql = "INSERT INTO " + table + " (user_id, date, os, page, create_time) value ('%s','%s','%s','%s','%s') " % (
                     #     userId, date, item.get('source'), str(page),
                     #     time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())))
                     # yield sql
-                    ## 保存文件或redis时返回结果
                     results = userId + '\t' + date + '\t' + item.get('source') + '\t' + str(
                         page) + '\t' + time.strftime(
                         '%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
+                    # print(results)
                     yield results
             if break_flag:
                 break
@@ -277,13 +292,15 @@ if __name__ == '__main__':
         userId = r.lpop(REDIS_KEY).decode()
         print(userId)
         try:
+            # 获取用户的containerid
+            containerid = get_userInfo(userId)
             # 获取单个用户的所有微博
-            results = get_weibo_info(userId)
+            results = get_weibo_info(userId, containerid)
             # 以下三种依照实际选取
             # 保存用户微博信息到数据库
-            save_weibo_info(results)
+            # save_weibo_info(results)
             # 保存用户微博信息到文件
-            save_weibo_info_to_txt(results)
+            # save_weibo_info_to_txt(results)
             # 保存用户微博信息到redis队列，之后再消费
             save_weibo_info_to_redis_queue(results)
             # 更新用户状态

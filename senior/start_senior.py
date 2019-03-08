@@ -14,7 +14,6 @@ r = redis.Redis(host='127.0.0.1', port=6379)
 REDIS_KEY = 'hw:weibo_spider:userIds'
 PROXY_KEY = 'hw:proxies'
 RESULT_KEY = 'hw:weibo_results'
-CONTAINERID = '1076031000258404'
 headers = 'Mozilla/5.0 (iPhone; CPU iPhone OS 11_0 like Mac OS X) AppleWebKit/604.1.38 (KHTML, like Gecko) Version/11.0 Mobile/15A372 Safari/604.1'
 PROXY_IP = ''
 num = 0
@@ -23,6 +22,7 @@ mutex = threading.Lock()
 
 
 # 格式化时间
+
 def time_fix(time_string):
     now_time = datetime.datetime.now()
     if '刚刚' in time_string:
@@ -36,19 +36,24 @@ def time_fix(time_string):
         return now_time.strftime('%Y-%m-%d')
 
     if '小时前' in time_string:
-        # minutes = re.search(r'^(\d+)小时', time_string).group(1)
-        # created_at = now_time - datetime.timedelta(hours=int(minutes))
-        return now_time.strftime('%Y-%m-%d')
+        minutes = re.search(r'^(\d+)小时', time_string).group(1)
+        created_at = now_time - datetime.timedelta(hours=int(minutes))
+
+        return created_at.strftime('%Y-%m-%d')
     if '今天' in time_string:
         return now_time.strftime('%Y-%m-%d')
 
     if '昨天' in time_string:
         created_at = now_time - datetime.timedelta(days=1)
         return created_at.strftime('%Y-%m-%d')
-    if '月' in time_string:
+
+    if '月' in time_string:  # 03月01日
         time_string = time_string.replace('月', '-').replace('日', '')
         time_string = str(now_time.year) + '-' + time_string
         return time_string
+
+    if '-' in time_string and len(time_string) == 5:  # 03-01 格式
+        return str(now_time.year) + '-' + time_string
 
     return time_string
 
@@ -128,11 +133,23 @@ def find_user_table(userId):
     return 'data_' + table_id
     pass
 
+# 获取微博主页的containerid，爬取微博内容时需要此id
+# 获取微博大V账号的用户基本信息，如：微博昵称、微博地址、微博头像、关注人数、粉丝数、性别、等级等
+# 这里我只需要获取containerid就可以了，其他信息如果有需要自行获取
+def get_userInfo(userId):
+    url = 'https://m.weibo.cn/api/container/getIndex?type=uid&value=' + userId
+    data = use_proxy(url, userId)
+    content = json.loads(data).get('data')
+    for data in content.get('tabsInfo').get('tabs'):
+        if (data.get('tab_type') == 'weibo'):
+            containerid = data.get('containerid')
+    return containerid
+
 
 # 发送请求解析数据
-def get_weibo_info(userId):
+def get_weibo_info(userId, containerid):
     table = find_user_table(userId)
-    weibo_url = 'https://m.weibo.cn/api/container/getIndex?type=uid&value=' + userId + '&containerid=' + CONTAINERID
+    weibo_url = 'https://m.weibo.cn/api/container/getIndex?type=uid&value=' + userId + '&containerid=' + containerid
     try:
         data = use_proxy(weibo_url, userId)
         response = json.loads(data).get('data')
@@ -163,7 +180,7 @@ def get_weibo_info(userId):
         page_num = int(int(total) / 10) + 1
         for page in range(2, page_num + 1):
             page_url = 'https://m.weibo.cn/api/container/getIndex?' \
-                       'type=uid&value=' + userId + '&containerid=' + CONTAINERID + '&page=' + str(page)
+                       'type=uid&value=' + userId + '&containerid=' + containerid + '&page=' + str(page)
             try:
                 page_data = use_proxy(page_url, userId)
                 items = json.loads(page_data).get('data').get('cards')
@@ -184,6 +201,7 @@ def get_weibo_info(userId):
                     results = userId + '\t' + date + '\t' + item.get('source') + '\t' + str(
                         page) + '\t' + time.strftime(
                         '%Y-%m-%d %H:%M:%S', time.localtime(time.time()))
+                    # print(results)
                     yield results
             if break_flag:
                 break
@@ -261,8 +279,10 @@ class CrawlerThread(threading.Thread):
             userId = r.lpop(REDIS_KEY).decode()
             print(userId)
             try:
+                # 获取用户的containerid
+                containerid = get_userInfo(userId)
                 # 获取单个用户的所有微博
-                results = get_weibo_info(userId)
+                results = get_weibo_info(userId, containerid)
                 # 保存用户微博信息到数据库
                 # save_weibo_info(results)
                 # save_weibo_info_to_txt(results)
